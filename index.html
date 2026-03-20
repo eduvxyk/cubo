@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <title>Cubo 3×3 Todo Branco - com Contorno Preto</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; font-family: Arial, sans-serif; }
+    canvas { display: block; }
+    #info {
+      position: absolute;
+      top: 15px; left: 15px;
+      color: #ddd;
+      background: rgba(0,0,0,0.7);
+      padding: 12px 18px;
+      border-radius: 10px;
+      pointer-events: none;
+      user-select: none;
+      font-size: 1.1em;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+<div id="info">
+  Clique + arraste numa face = gira a camada<br>
+  Scroll = zoom | Clique direito + arraste = girar câmera
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
+
+<script>
+// ================================================
+// Cubo 3×3 – TODO BRANCO + CONTORNO PRETO NAS ARESTAS
+// ================================================
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 100);
+camera.position.set(11, 10, 14);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.10;
+controls.rotateSpeed = 0.9;
+controls.minDistance = 9;
+controls.maxDistance = 32;
+
+// Luzes
+scene.add(new THREE.AmbientLight(0xffffff, 1.3));
+scene.add(new THREE.DirectionalLight(0xffffff, 1.7).position.set(18,20,15));
+scene.add(new THREE.DirectionalLight(0xffffff, 1.1).position.set(-16,-13,-16));
+
+// Parâmetros
+const SCALE       = 2.4;
+const pieceSize   = 1.0;
+const gap         = 0.08;  // pequeno espaço entre peças
+
+const whiteMat = new THREE.MeshPhongMaterial({
+  color: 0xffffff,
+  shininess: 80,
+  specular: 0xbbbbbb
+});
+
+const blackLineMat = new THREE.LineBasicMaterial({
+  color: 0x000000,
+  linewidth: 2.5  // ajuste aqui se quiser mais grosso/fino (nem sempre funciona em todos os navegadores)
+});
+
+// Grupo principal do cubo
+const rubik = new THREE.Group();
+scene.add(rubik);
+rubik.scale.set(SCALE, SCALE, SCALE);
+
+// Cria cubinho com corpo branco + contorno preto
+function createCubie(x, y, z) {
+  const posX = x * (pieceSize + gap);
+  const posY = y * (pieceSize + gap);
+  const posZ = z * (pieceSize + gap);
+
+  // Corpo branco
+  const geometry = new THREE.BoxGeometry(pieceSize, pieceSize, pieceSize);
+  const mesh = new THREE.Mesh(geometry, whiteMat);
+  mesh.position.set(posX, posY, posZ);
+
+  // Contorno preto (arestas)
+  const edges = new THREE.EdgesGeometry(geometry);
+  const outline = new THREE.LineSegments(edges, blackLineMat);
+  outline.position.copy(mesh.position); // mesma posição
+
+  // Grupo para cada peça (corpo + bordas)
+  const group = new THREE.Group();
+  group.add(mesh);
+  group.add(outline);
+
+  return group;
+}
+
+// Adiciona todas as 27 peças
+for (let x = -1; x <= 1; x++) {
+  for (let y = -1; y <= 1; y++) {
+    for (let z = -1; z <= 1; z++) {
+      rubik.add(createCubie(x, y, z));
+    }
+  }
+}
+
+// ───────────────────────────────────────────────
+// Controles de rotação (ajustado para grupos de peças)
+// ───────────────────────────────────────────────
+
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+let selectedFaceNormal = null;
+let selectedAxis = null;
+let dragStart = null;
+let isDraggingFace = false;
+let rotatingGroup = null;
+let rotationTween = 0;
+let targetAngle = 0;
+const rotationSpeed = 0.085;
+
+const faceDirections = [
+  { name:"R", axis:"x", sign: 1,  normal: new THREE.Vector3( 1, 0, 0) },
+  { name:"L", axis:"x", sign:-1,  normal: new THREE.Vector3(-1, 0, 0) },
+  { name:"U", axis:"y", sign: 1,  normal: new THREE.Vector3( 0, 1, 0) },
+  { name:"D", axis:"y", sign:-1,  normal: new THREE.Vector3( 0,-1, 0) },
+  { name:"F", axis:"z", sign: 1,  normal: new THREE.Vector3( 0, 0, 1) },
+  { name:"B", axis:"z", sign:-1,  normal: new THREE.Vector3( 0, 0,-1) },
+];
+
+function onMouseDown(e) {
+  if (e.button !== 0) return;
+  mouse.x = (e.clientX / innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / innerHeight) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObjects(rubik.children, true);
+
+  if (intersects.length > 0) {
+    const normalWorld = intersects[0].face.normal.clone().applyQuaternion(rubik.quaternion);
+    let bestFace = null;
+    let maxDot = -1;
+
+    for (const f of faceDirections) {
+      const dot = normalWorld.dot(f.normal);
+      if (dot > maxDot) {
+        maxDot = dot;
+        bestFace = f;
+      }
+    }
+
+    if (maxDot > 0.6) {
+      selectedFaceNormal = bestFace;
+      selectedAxis = bestFace.axis;
+      dragStart = new THREE.Vector2(e.clientX, e.clientY);
+      isDraggingFace = true;
+      controls.enabled = false;
+    }
+  }
+}
+
+function onMouseMove(e) {
+  if (!isDraggingFace || !dragStart) return;
+
+  const deltaX = e.clientX - dragStart.x;
+  const deltaY = e.clientY - dragStart.y;
+
+  let angle = Math.abs(deltaX) > Math.abs(deltaY) ? deltaX * 0.0075 : -deltaY * 0.0075;
+  if (selectedFaceNormal.sign === -1) angle = -angle;
+
+  if (!rotatingGroup) {
+    rotatingGroup = new THREE.Group();
+    scene.add(rotatingGroup);
+
+    rubik.children
+      .filter(c => Math.abs(c.position[selectedAxis] / SCALE - selectedFaceNormal.sign) < 0.2)
+      .forEach(c => {
+        rubik.remove(c);
+        rotatingGroup.add(c);
+      });
+  }
+
+  rotatingGroup.rotation[selectedAxis] = angle;
+}
+
+function onMouseUp() {
+  if (!isDraggingFace) return;
+  isDraggingFace = false;
+  controls.enabled = true;
+  dragStart = null;
+
+  if (!rotatingGroup) return;
+
+  const current = rotatingGroup.rotation[selectedAxis];
+  let snaps = [0, Math.PI/2, -Math.PI/2];
+  let closest = snaps.reduce((p, c) => Math.abs(c - current) < Math.abs(p - current) ? c : p);
+
+  if (Math.abs(closest - current) < 0.12) closest = 0;
+
+  targetAngle = closest;
+  rotationTween = current;
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  if (rotatingGroup && Math.abs(rotationTween - targetAngle) > 0.001) {
+    rotationTween += (targetAngle - rotationTween) * rotationSpeed * 1.7;
+    rotatingGroup.rotation[selectedAxis] = rotationTween;
+
+    if (Math.abs(rotationTween - targetAngle) < 0.004) {
+      rotatingGroup.rotation[selectedAxis] = targetAngle;
+
+      while (rotatingGroup.children.length) {
+        const child = rotatingGroup.children[0];
+        child.updateMatrixWorld(true);
+        const worldPos = new THREE.Vector3();
+        child.getWorldPosition(worldPos);
+        child.position.copy(worldPos);
+        child.rotation.set(0,0,0);
+        rotatingGroup.remove(child);
+        rubik.add(child);
+      }
+
+      scene.remove(rotatingGroup);
+      rotatingGroup = null;
+      targetAngle = 0;
+      rotationTween = 0;
+    }
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+animate();
+
+window.addEventListener('mousedown', onMouseDown);
+window.addEventListener('mousemove', onMouseMove);
+window.addEventListener('mouseup',   onMouseUp);
+window.addEventListener('mouseleave',onMouseUp);
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
